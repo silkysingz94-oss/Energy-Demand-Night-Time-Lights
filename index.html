@@ -83,7 +83,7 @@ button.dark{background:var(--navy)}
 
 <header>
  <div class="brand">
-  GBoS GEOAI | ENERGY DEMAND INTELLIGENCE
+  SILKYSINGZ GEOAI | ENERGY DEMAND INTELLIGENCE
   <small>Population • Households • Energy Demand • Ward-Level Analysis</small>
  </div>
  <div class="status" id="connection">CONNECTING TO GITHUB...</div>
@@ -316,8 +316,8 @@ button.dark{background:var(--navy)}
 
 <div class="footer">
  Produced by Ansu Singhateh<br>
- GIS Analyst | GIS / Cartography Unit | Gambia Bureau of Statistics<br>
- GBoS GEOAI • Research and educational use
+ GIS Analyst | GIS-Cartography Unit | Gambia Bureau of Statistics<br>
+ SILKYSINGZ GEOAI • Research and educational use
 </div>
 </section>
 </main>
@@ -869,14 +869,14 @@ function exportStats(){
   ]);
  });
 
- downloadFile(csv(rows),"GBoS_Ward_Energy_Statistics.csv","text/csv");
+ downloadFile(csv(rows),"SILKYSINGZ_Ward_Energy_Statistics.csv","text/csv");
 }
 
 function exportForecast(){
  const rows=[["Year","Annual_Demand_kWh"],
   ...forecastRows.map(r=>[r.year,r.demand])];
 
- downloadFile(csv(rows),"GBoS_Energy_Forecast.csv","text/csv");
+ downloadFile(csv(rows),"SILKYSINGZ_Energy_Forecast.csv","text/csv");
 }
 
 function exportGeoJSON(){
@@ -886,7 +886,7 @@ function exportGeoJSON(){
  };
 
  downloadFile(JSON.stringify(collection,null,2),
-  "GBoS_Selected_Ward_EA_Features.geojson","application/geo+json");
+  "SILKYSINGZ_Selected_Ward_EA_Features.geojson","application/geo+json");
 }
 
 /* =====================================================
