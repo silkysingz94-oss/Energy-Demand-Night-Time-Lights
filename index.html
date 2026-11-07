@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GBoS GEOAI | Gambia Energy Demand Intelligence</title>
+<title>SILKYSINGZ GEOAI | GAMBIA ENERGY DEMAND INTELLIGENCE</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -869,14 +869,14 @@ function exportStats(){
   ]);
  });
 
- downloadFile(csv(rows),"SILKYSINGZ_Ward_Energy_Statistics.csv","text/csv");
+ downloadFile(csv(rows),"GBoS_Ward_Energy_Statistics.csv","text/csv");
 }
 
 function exportForecast(){
  const rows=[["Year","Annual_Demand_kWh"],
   ...forecastRows.map(r=>[r.year,r.demand])];
 
- downloadFile(csv(rows),"SILKYSINGZ_Energy_Forecast.csv","text/csv");
+ downloadFile(csv(rows),"GBoS_Energy_Forecast.csv","text/csv");
 }
 
 function exportGeoJSON(){
@@ -886,7 +886,7 @@ function exportGeoJSON(){
  };
 
  downloadFile(JSON.stringify(collection,null,2),
-  "SILKYSINGZ_Selected_Ward_EA_Features.geojson","application/geo+json");
+  "GBoS_Selected_Ward_EA_Features.geojson","application/geo+json");
 }
 
 /* =====================================================
