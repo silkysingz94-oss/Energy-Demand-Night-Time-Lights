@@ -1,0 +1,1545 @@
+
+/***************************************************************
+ GBoS GEOAI | ENERGY DEMAND & NIGHT-TIME LIGHTS INTELLIGENCE
+ The Gambia
+
+ Produced by Ansu Singhateh
+ GIS Analyst | GIS / Cartography Unit
+ Gambia Bureau of Statistics
+
+ Data:
+ 1. NOAA VIIRS Night-Time Lights
+    NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG
+ 2. Gambia Enumeration Areas
+    projects/ee-aishaansu80/assets/GambiaEA_Final1
+
+ Important:
+ Energy demand is an indicative model based on population
+ and user-defined consumption assumptions. It is not actual
+ electricity-meter consumption or an official forecast.
+***************************************************************/
+
+
+// ============================================================
+// 01. CONFIGURATION
+// ============================================================
+
+var APP_TITLE = 'GBoS GEOAI | ENERGY DEMAND INTELLIGENCE';
+
+var EA_ASSET =
+  'projects/ee-aishaansu80/assets/GambiaEA_Final1';
+
+var VIIRS_ASSET =
+  'NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG';
+
+var GAMBIA = ee.Geometry.Rectangle(
+  [-16.817362, 13.064655, -13.790928, 13.826890],
+  null,
+  false
+);
+
+var START_YEAR = 2014;
+var END_YEAR = 2026;
+var FORECAST_END = 2035;
+
+var CENTER_LON = -15.304;
+var CENTER_LAT = 13.445;
+
+
+// ============================================================
+// 02. DATA
+// ============================================================
+
+var ea = ee.FeatureCollection(EA_ASSET);
+
+var viirs = ee.ImageCollection(VIIRS_ASSET)
+  .filterBounds(GAMBIA)
+  .filterDate('2014-01-01', '2027-01-01');
+
+var initialBoundary = ea.filterBounds(GAMBIA);
+
+
+// ============================================================
+// 03. APPLICATION STATE
+// ============================================================
+
+var selectedRegion = 'ALL';
+var selectedLGA = 'ALL';
+var selectedDistrict = 'ALL';
+var selectedWard = 'ALL';
+
+var currentImage = null;
+var currentAOI = GAMBIA;
+var currentEA = initialBoundary;
+
+var currentYear = 2026;
+var currentMonth = 0;
+var currentCoverage = 1;
+var currentMaxRadiance = 60;
+
+var currentPerCapita = 50;
+var currentGrowth = 0.03;
+
+
+// ============================================================
+// 04. MAP
+// ============================================================
+
+var map = ui.Map();
+
+map.setCenter(CENTER_LON, CENTER_LAT, 8);
+map.setOptions('HYBRID');
+
+map.setControlVisibility({
+  all: true,
+  layerList: true,
+  zoomControl: true,
+  scaleControl: true,
+  mapTypeControl: false,
+  fullscreenControl: true
+});
+
+
+// ============================================================
+// 05. COMMON UI FUNCTIONS
+// ============================================================
+
+function heading(text) {
+  return ui.Label(text, {
+    fontWeight: 'bold',
+    fontSize: '15px',
+    color: '#00a6a6',
+    margin: '12px 0 6px 0'
+  });
+}
+
+function smallLabel(text) {
+  return ui.Label(text, {
+    fontSize: '11px',
+    color: '#9ca3af',
+    margin: '3px 0'
+  });
+}
+
+function sectionLabel(text) {
+  return ui.Label(text, {
+    fontSize: '12px',
+    fontWeight: 'bold',
+    color: '#e5e7eb',
+    margin: '8px 0 3px 0'
+  });
+}
+
+function makeKPI(title, value, description) {
+  var panel = ui.Panel({
+    widgets: [
+      ui.Label(title, {
+        fontSize: '11px',
+        color: '#9ca3af'
+      }),
+      ui.Label(value, {
+        fontSize: '21px',
+        fontWeight: 'bold',
+        color: '#ffffff'
+      }),
+      ui.Label(description || '', {
+        fontSize: '10px',
+        color: '#9ca3af'
+      })
+    ],
+    style: {
+      backgroundColor: '#17212b',
+      padding: '10px',
+      margin: '4px',
+      border: '1px solid #344454'
+    }
+  });
+
+  return panel;
+}
+
+function formatNumber(value, decimals) {
+  if (value === null || value === undefined ||
+      !isFinite(Number(value))) {
+    return 'N/A';
+  }
+
+  return Number(value).toLocaleString(
+    'en-US',
+    {
+      maximumFractionDigits: decimals || 0
+    }
+  );
+}
+
+
+// ============================================================
+// 06. CONTROLS PANEL
+// ============================================================
+
+var controls = ui.Panel({
+  style: {
+    width: '33.33%',
+    height: '100%',
+    padding: '10px',
+    backgroundColor: '#101923'
+  }
+});
+
+controls.add(ui.Label('GBoS GEOAI', {
+  fontSize: '22px',
+  fontWeight: 'bold',
+  color: '#00d1c1'
+}));
+
+controls.add(ui.Label(
+  'ENERGY DEMAND & NIGHT-TIME LIGHTS',
+  {
+    fontSize: '12px',
+    fontWeight: 'bold',
+    color: '#ffffff'
+  }
+));
+
+controls.add(smallLabel(
+  'National energy intelligence | The Gambia'
+));
+
+controls.add(heading('01 | GEOGRAPHIC SELECTION'));
+
+var regionSelect = ui.Select({
+  items: ['ALL'],
+  value: 'ALL',
+  placeholder: 'Select region',
+  style: {stretch: 'horizontal'}
+});
+
+var lgaSelect = ui.Select({
+  items: ['ALL'],
+  value: 'ALL',
+  placeholder: 'Select LGA',
+  style: {stretch: 'horizontal'}
+});
+
+var districtSelect = ui.Select({
+  items: ['ALL'],
+  value: 'ALL',
+  placeholder: 'Select district',
+  style: {stretch: 'horizontal'}
+});
+
+var wardSelect = ui.Select({
+  items: ['ALL'],
+  value: 'ALL',
+  placeholder: 'Select ward',
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(sectionLabel('Region'));
+controls.add(regionSelect);
+
+controls.add(sectionLabel('LGA'));
+controls.add(lgaSelect);
+
+controls.add(sectionLabel('District'));
+controls.add(districtSelect);
+
+controls.add(sectionLabel('Ward'));
+controls.add(wardSelect);
+
+
+// ============================================================
+// 07. GEOGRAPHIC FILTERS
+// ============================================================
+
+function selectedFeatures() {
+  var fc = ea;
+
+  if (selectedRegion !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('RCO', selectedRegion)
+    );
+  }
+
+  if (selectedLGA !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('lganame', selectedLGA)
+    );
+  }
+
+  if (selectedDistrict !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('distname', selectedDistrict)
+    );
+  }
+
+  if (selectedWard !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('wardname', selectedWard)
+    );
+  }
+
+  return fc;
+}
+
+function populateSelect(fc, property, selector, callback) {
+  fc.aggregate_array(property)
+    .distinct()
+    .sort()
+    .evaluate(function(values) {
+
+      if (!values) {
+        selector.items().reset(['ALL']);
+        selector.setValue('ALL', false);
+        if (callback) callback();
+        return;
+      }
+
+      var options = ['ALL'].concat(values);
+
+      selector.items().reset(options);
+      selector.setValue('ALL', false);
+
+      if (callback) callback();
+    });
+}
+
+function refreshGeography() {
+
+  selectedRegion = regionSelect.getValue() || 'ALL';
+  selectedLGA = lgaSelect.getValue() || 'ALL';
+  selectedDistrict = districtSelect.getValue() || 'ALL';
+  selectedWard = wardSelect.getValue() || 'ALL';
+
+  var fc = ea;
+
+  if (selectedRegion !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('RCO', selectedRegion)
+    );
+  }
+
+  populateSelect(
+    fc,
+    'lganame',
+    lgaSelect,
+    function() {
+
+      selectedLGA = 'ALL';
+      selectedDistrict = 'ALL';
+      selectedWard = 'ALL';
+
+      var districtFC = fc;
+
+      populateSelect(
+        districtFC,
+        'distname',
+        districtSelect,
+        function() {
+
+          populateSelect(
+            districtFC,
+            'wardname',
+            wardSelect
+          );
+
+          runAnalysis();
+        }
+      );
+    }
+  );
+}
+
+regionSelect.onChange(function(value) {
+  selectedRegion = value;
+  selectedLGA = 'ALL';
+  selectedDistrict = 'ALL';
+  selectedWard = 'ALL';
+  refreshGeography();
+});
+
+lgaSelect.onChange(function(value) {
+  selectedLGA = value;
+  selectedDistrict = 'ALL';
+  selectedWard = 'ALL';
+
+  var fc = ea;
+
+  if (selectedRegion !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('RCO', selectedRegion)
+    );
+  }
+
+  if (selectedLGA !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('lganame', selectedLGA)
+    );
+  }
+
+  populateSelect(
+    fc,
+    'distname',
+    districtSelect,
+    function() {
+      populateSelect(fc, 'wardname', wardSelect);
+      runAnalysis();
+    }
+  );
+});
+
+districtSelect.onChange(function(value) {
+  selectedDistrict = value;
+  selectedWard = 'ALL';
+
+  var fc = ea;
+
+  if (selectedRegion !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('RCO', selectedRegion)
+    );
+  }
+
+  if (selectedLGA !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('lganame', selectedLGA)
+    );
+  }
+
+  if (selectedDistrict !== 'ALL') {
+    fc = fc.filter(
+      ee.Filter.eq('distname', selectedDistrict)
+    );
+  }
+
+  populateSelect(fc, 'wardname', wardSelect);
+  runAnalysis();
+});
+
+wardSelect.onChange(function(value) {
+  selectedWard = value;
+  runAnalysis();
+});
+
+populateSelect(ea, 'RCO', regionSelect);
+
+
+// ============================================================
+// 08. NIGHT-TIME LIGHT CONTROLS
+// ============================================================
+
+controls.add(heading('02 | NIGHT-TIME LIGHTS'));
+
+var yearSelect = ui.Select({
+  items: [
+    '2014','2015','2016','2017','2018','2019',
+    '2020','2021','2022','2023','2024','2025','2026'
+  ],
+  value: '2026',
+  style: {stretch: 'horizontal'}
+});
+
+var monthSelect = ui.Select({
+  items: [
+    {label: 'Annual average', value: '0'},
+    {label: 'January', value: '1'},
+    {label: 'February', value: '2'},
+    {label: 'March', value: '3'},
+    {label: 'April', value: '4'},
+    {label: 'May', value: '5'},
+    {label: 'June', value: '6'},
+    {label: 'July', value: '7'},
+    {label: 'August', value: '8'},
+    {label: 'September', value: '9'},
+    {label: 'October', value: '10'},
+    {label: 'November', value: '11'},
+    {label: 'December', value: '12'}
+  ],
+  value: '0',
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(sectionLabel('Observation year'));
+controls.add(yearSelect);
+
+controls.add(sectionLabel('Observation period'));
+controls.add(monthSelect);
+
+controls.add(sectionLabel('Minimum cloud-free coverage'));
+var coverageSlider = ui.Slider({
+  min: 0,
+  max: 5,
+  value: 1,
+  step: 1,
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(coverageSlider);
+
+controls.add(sectionLabel('Maximum display radiance'));
+var radianceSlider = ui.Slider({
+  min: 5,
+  max: 100,
+  value: 60,
+  step: 5,
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(radianceSlider);
+
+
+// ============================================================
+// 09. ENERGY DEMAND ASSUMPTIONS
+// ============================================================
+
+controls.add(heading('03 | ENERGY DEMAND MODEL'));
+
+controls.add(smallLabel(
+  'Adjust the assumptions used in the indicative forecast.'
+));
+
+controls.add(sectionLabel(
+  'Monthly electricity consumption per person (kWh)'
+));
+
+var perCapitaSlider = ui.Slider({
+  min: 5,
+  max: 300,
+  value: 50,
+  step: 5,
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(perCapitaSlider);
+
+controls.add(sectionLabel(
+  'Annual population growth assumption (%)'
+));
+
+var growthSlider = ui.Slider({
+  min: 0,
+  max: 8,
+  value: 3,
+  step: 0.5,
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(growthSlider);
+
+controls.add(smallLabel(
+  'Forecast baseline: 2023 EA population totals.'
+));
+
+controls.add(smallLabel(
+  'Projection period: 2026–2035.'
+));
+
+
+// ============================================================
+// 10. MAP DISPLAY CONTROLS
+// ============================================================
+
+controls.add(heading('04 | MAP DISPLAY'));
+
+var basemapSelect = ui.Select({
+  items: ['HYBRID', 'SATELLITE', 'ROADMAP', 'TERRAIN'],
+  value: 'HYBRID',
+  style: {stretch: 'horizontal'}
+});
+
+controls.add(sectionLabel('Basemap'));
+controls.add(basemapSelect);
+
+basemapSelect.onChange(function(value) {
+  map.setOptions(value);
+});
+
+var showLights = ui.Checkbox({
+  label: 'Show VIIRS night-time lights',
+  value: true
+});
+
+var showBoundary = ui.Checkbox({
+  label: 'Show selected EA boundaries',
+  value: true
+});
+
+controls.add(showLights);
+controls.add(showBoundary);
+
+showLights.onChange(runAnalysis);
+showBoundary.onChange(runAnalysis);
+
+
+// ============================================================
+// 11. BUTTONS
+// ============================================================
+
+var runButton = ui.Button({
+  label: 'RUN ANALYSIS',
+  style: {
+    stretch: 'horizontal',
+    backgroundColor: '#007f79',
+    color: '#ffffff',
+    fontWeight: 'bold'
+  },
+  onClick: runAnalysis
+});
+
+var resetButton = ui.Button({
+  label: 'RESET',
+  style: {
+    stretch: 'horizontal',
+    backgroundColor: '#344454',
+    color: '#ffffff'
+  },
+  onClick: function() {
+
+    selectedRegion = 'ALL';
+    selectedLGA = 'ALL';
+    selectedDistrict = 'ALL';
+    selectedWard = 'ALL';
+
+    regionSelect.setValue('ALL');
+    lgaSelect.setValue('ALL');
+    districtSelect.setValue('ALL');
+    wardSelect.setValue('ALL');
+
+    yearSelect.setValue('2026');
+    monthSelect.setValue('0');
+
+    coverageSlider.setValue(1);
+    radianceSlider.setValue(60);
+    perCapitaSlider.setValue(50);
+    growthSlider.setValue(3);
+
+    showLights.setValue(true);
+    showBoundary.setValue(true);
+
+    map.setCenter(CENTER_LON, CENTER_LAT, 8);
+
+    runAnalysis();
+  }
+});
+
+controls.add(runButton);
+controls.add(resetButton);
+
+
+// ============================================================
+// 12. ANALYTICS PANEL
+// ============================================================
+
+var analytics = ui.Panel({
+  style: {
+    width: '33.33%',
+    height: '100%',
+    padding: '10px',
+    backgroundColor: '#101923'
+  }
+});
+
+analytics.add(ui.Label('ENERGY ANALYTICS', {
+  fontSize: '19px',
+  fontWeight: 'bold',
+  color: '#00d1c1'
+}));
+
+analytics.add(smallLabel(
+  'The Gambia | Spatial and temporal intelligence'
+));
+
+analytics.add(heading('05 | NATIONAL / SELECTED AREA KPIs'));
+
+var kpiGrid = ui.Panel({
+  layout: ui.Panel.Layout.flow('horizontal'),
+  style: {stretch: 'horizontal'}
+});
+
+analytics.add(kpiGrid);
+
+var populationLabel = ui.Label('Population: Loading...', {
+  color: '#ffffff',
+  fontSize: '12px'
+});
+
+var householdLabel = ui.Label('Households: Loading...', {
+  color: '#ffffff',
+  fontSize: '12px'
+});
+
+var radianceLabel = ui.Label('Mean radiance: Loading...', {
+  color: '#ffffff',
+  fontSize: '12px'
+});
+
+var maxRadianceLabel = ui.Label('Maximum radiance: Loading...', {
+  color: '#ffffff',
+  fontSize: '12px'
+});
+
+var annualDemandLabel = ui.Label('Annual demand: Loading...', {
+  color: '#ffffff',
+  fontSize: '12px'
+});
+
+var peakDemandLabel = ui.Label('Average load: Loading...', {
+  color: '#ffffff',
+  fontSize: '12px'
+});
+
+analytics.add(populationLabel);
+analytics.add(householdLabel);
+analytics.add(radianceLabel);
+analytics.add(maxRadianceLabel);
+analytics.add(annualDemandLabel);
+analytics.add(peakDemandLabel);
+
+analytics.add(heading('06 | NIGHT-TIME LIGHTS TREND'));
+
+var annualChartPanel = ui.Panel({
+  style: {
+    backgroundColor: '#17212b',
+    padding: '5px',
+    margin: '4px'
+  }
+});
+
+analytics.add(annualChartPanel);
+
+analytics.add(heading('07 | MONTHLY RADIANCE TREND'));
+
+var monthlyChartPanel = ui.Panel({
+  style: {
+    backgroundColor: '#17212b',
+    padding: '5px',
+    margin: '4px'
+  }
+});
+
+analytics.add(monthlyChartPanel);
+
+analytics.add(heading('08 | ENERGY DEMAND FORECAST'));
+
+var forecastChartPanel = ui.Panel({
+  style: {
+    backgroundColor: '#17212b',
+    padding: '5px',
+    margin: '4px'
+  }
+});
+
+analytics.add(forecastChartPanel);
+
+analytics.add(heading('09 | MAP LEGEND'));
+
+var legendPanel = ui.Panel({
+  style: {
+    backgroundColor: '#17212b',
+    padding: '8px',
+    margin: '4px'
+  }
+});
+
+function addLegendRow(color, label) {
+  var colorBox = ui.Label('', {
+    backgroundColor: color,
+    padding: '8px',
+    margin: '3px 8px 3px 2px'
+  });
+
+  var textLabel = ui.Label(label, {
+    color: '#ffffff',
+    fontSize: '11px'
+  });
+
+  legendPanel.add(
+    ui.Panel({
+      widgets: [colorBox, textLabel],
+      layout: ui.Panel.Layout.flow('horizontal')
+    })
+  );
+}
+
+addLegendRow('#172b8c', 'Very low radiance');
+addLegendRow('#2469c4', 'Low radiance');
+addLegendRow('#18a6a0', 'Moderate radiance');
+addLegendRow('#a9d64a', 'High radiance');
+addLegendRow('#fff000', 'Very high radiance');
+
+analytics.add(legendPanel);
+
+
+// ============================================================
+// 13. METHODOLOGY
+// ============================================================
+
+analytics.add(heading('10 | METHODOLOGY'));
+
+analytics.add(ui.Label(
+  'Night-time lights: NOAA VIIRS monthly cloud-free ' +
+  'corrected radiance observations. The selected period ' +
+  'is aggregated over the selected geographic area.',
+  {
+    color: '#d1d5db',
+    fontSize: '11px',
+    whiteSpace: 'normal'
+  }
+));
+
+analytics.add(ui.Label(
+  'Population: EA-level sum_pop and sum_hhs attributes ' +
+  'from the Gambia Enumeration Areas dataset.',
+  {
+    color: '#d1d5db',
+    fontSize: '11px',
+    whiteSpace: 'normal'
+  }
+));
+
+analytics.add(ui.Label(
+  'Energy model: projected population multiplied by ' +
+  'the assumed monthly electricity consumption per person. ' +
+  'Annual demand is expressed in MWh.',
+  {
+    color: '#d1d5db',
+    fontSize: '11px',
+    whiteSpace: 'normal'
+  }
+));
+
+analytics.add(ui.Label(
+  'Limitations: night-time radiance is an indirect ' +
+  'indicator of human activity and electrification. ' +
+  'It is not a direct measurement of electricity use. ' +
+  'The forecast does not include industrial load, ' +
+  'commercial tariffs, transmission losses or measured ' +
+  'utility consumption.',
+  {
+    color: '#fbbf24',
+    fontSize: '11px',
+    whiteSpace: 'normal'
+  }
+));
+
+
+// ============================================================
+// 14. DATA SOURCES AND CREDITS
+// ============================================================
+
+analytics.add(heading('11 | DATA SOURCES'));
+
+analytics.add(ui.Label(
+  'NOAA VIIRS DNB Monthly V1.0 | Google Earth Engine',
+  {
+    color: '#d1d5db',
+    fontSize: '11px'
+  }
+));
+
+analytics.add(ui.Label(
+  'Gambia Enumeration Areas | GBoS GIS dataset',
+  {
+    color: '#d1d5db',
+    fontSize: '11px'
+  }
+));
+
+analytics.add(heading('12 | CREDITS'));
+
+analytics.add(ui.Label(
+  'Produced by Ansu Singhateh\n' +
+  'GIS Analyst | GIS / Cartography Unit\n' +
+  'Gambia Bureau of Statistics\n\n' +
+  'GBoS GEOAI • Research and educational use',
+  {
+    color: '#00d1c1',
+    fontSize: '11px',
+    whiteSpace: 'pre'
+  }
+));
+
+
+// ============================================================
+// 15. GEOGRAPHIC SELECTION
+// ============================================================
+
+function getCurrentFeatures() {
+  return selectedFeatures();
+}
+
+function getCurrentGeometry(fc) {
+  return fc.geometry().intersection(
+    GAMBIA,
+    ee.ErrorMargin(100)
+  );
+}
+
+
+// ============================================================
+// 16. BUILD NIGHT-TIME IMAGE
+// ============================================================
+
+function getNightImage(year, month, coverageThreshold) {
+
+  var start;
+  var end;
+
+  if (month === 0) {
+
+    start = ee.Date.fromYMD(year, 1, 1);
+    end = start.advance(1, 'year');
+
+  } else {
+
+    start = ee.Date.fromYMD(year, month, 1);
+    end = start.advance(1, 'month');
+
+  }
+
+  var collection = viirs
+    .filterDate(start, end)
+    .select(['avg_rad', 'cf_cvg']);
+
+  var image = collection.mean();
+
+  var coverage = image.select('cf_cvg');
+
+  var maskedRadiance = image
+    .select('avg_rad')
+    .updateMask(
+      coverage.gte(coverageThreshold)
+    )
+    .rename('avg_rad');
+
+  return maskedRadiance
+    .addBands(coverage.rename('cf_cvg'))
+    .set('year', year)
+    .set('month', month);
+}
+
+
+// ============================================================
+// 17. ANNUAL RADIANCE COLLECTION
+// ============================================================
+
+function getAnnualCollection() {
+
+  var years = ee.List.sequence(
+    START_YEAR,
+    END_YEAR
+  );
+
+  var annualImages = years.map(function(year) {
+
+    year = ee.Number(year);
+
+    var start = ee.Date.fromYMD(year, 1, 1);
+    var end = start.advance(1, 'year');
+
+    var collection = viirs
+      .filterDate(start, end)
+      .select('avg_rad');
+
+    var image = collection.mean()
+      .rename('avg_rad')
+      .set('system:time_start', start.millis())
+      .set('year', year);
+
+    return image;
+  });
+
+  return ee.ImageCollection.fromImages(annualImages);
+}
+
+
+// ============================================================
+// 18. FORECAST MODEL
+// ============================================================
+
+function makeForecastChart(population) {
+
+  var annualGrowth = currentGrowth;
+  var monthlyKwh = currentPerCapita;
+
+  var annualKwh = monthlyKwh * 12;
+
+  var years = ee.List.sequence(
+    2023,
+    FORECAST_END
+  );
+
+  var forecastFeatures = ee.FeatureCollection(
+    years.map(function(year) {
+
+      year = ee.Number(year);
+
+      var projectedPopulation = ee.Number(population)
+        .multiply(
+          ee.Number(1 + annualGrowth)
+            .pow(year.subtract(2023))
+        );
+
+      var annualMWh = projectedPopulation
+        .multiply(annualKwh)
+        .divide(1000);
+
+      var averageMW = annualMWh.divide(8760);
+
+      return ee.Feature(null, {
+        year: year,
+        population: projectedPopulation,
+        annual_mwh: annualMWh,
+        average_mw: averageMW
+      });
+    })
+  );
+
+  return ui.Chart.feature.byFeature(
+    forecastFeatures,
+    'year',
+    ['annual_mwh']
+  )
+  .setChartType('LineChart')
+  .setOptions({
+    title: 'Projected annual electricity demand',
+    titleTextStyle: {
+      color: '#ffffff',
+      fontSize: 12
+    },
+    backgroundColor: '#17212b',
+    legend: {position: 'none'},
+    hAxis: {
+      title: 'Year',
+      textStyle: {color: '#ffffff'},
+      titleTextStyle: {color: '#ffffff'}
+    },
+    vAxis: {
+      title: 'Annual demand (MWh)',
+      textStyle: {color: '#ffffff'},
+      titleTextStyle: {color: '#ffffff'}
+    },
+    lineWidth: 2,
+    pointSize: 3,
+    colors: ['#00d1c1'],
+    chartArea: {
+      backgroundColor: '#17212b'
+    }
+  });
+}
+
+
+// ============================================================
+// 19. MONTHLY RADIANCE CHART
+// ============================================================
+
+function makeMonthlyChart(year, geometry) {
+
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+
+  var collection = viirs
+    .filterDate(start, end)
+    .select('avg_rad');
+
+  return ui.Chart.image.series({
+    imageCollection: collection,
+    region: geometry,
+    reducer: ee.Reducer.mean(),
+    scale: 500,
+    xProperty: 'system:time_start'
+  })
+  .setChartType('LineChart')
+  .setOptions({
+    title: 'Monthly mean radiance',
+    titleTextStyle: {
+      color: '#ffffff',
+      fontSize: 12
+    },
+    backgroundColor: '#17212b',
+    legend: {position: 'none'},
+    hAxis: {
+      title: 'Month',
+      textStyle: {color: '#ffffff'},
+      titleTextStyle: {color: '#ffffff'}
+    },
+    vAxis: {
+      title: 'Radiance',
+      textStyle: {color: '#ffffff'},
+      titleTextStyle: {color: '#ffffff'}
+    },
+    colors: ['#f4bd50'],
+    lineWidth: 2,
+    pointSize: 3,
+    chartArea: {
+      backgroundColor: '#17212b'
+    }
+  });
+}
+
+
+// ============================================================
+// 20. ANNUAL RADIANCE CHART
+// ============================================================
+
+function makeAnnualChart(geometry) {
+
+  var collection = getAnnualCollection();
+
+  return ui.Chart.image.series({
+    imageCollection: collection,
+    region: geometry,
+    reducer: ee.Reducer.mean(),
+    scale: 500,
+    xProperty: 'system:time_start'
+  })
+  .setChartType('LineChart')
+  .setOptions({
+    title: 'Annual mean night-time radiance',
+    titleTextStyle: {
+      color: '#ffffff',
+      fontSize: 12
+    },
+    backgroundColor: '#17212b',
+    legend: {position: 'none'},
+    hAxis: {
+      title: 'Year',
+      textStyle: {color: '#ffffff'},
+      titleTextStyle: {color: '#ffffff'}
+    },
+    vAxis: {
+      title: 'Mean radiance',
+      textStyle: {color: '#ffffff'},
+      titleTextStyle: {color: '#ffffff'}
+    },
+    colors: ['#00d1c1'],
+    lineWidth: 2,
+    pointSize: 4,
+    chartArea: {
+      backgroundColor: '#17212b'
+    }
+  });
+}
+
+
+// ============================================================
+// 21. MAIN ANALYSIS
+// ============================================================
+
+function runAnalysis() {
+
+  currentYear = parseInt(yearSelect.getValue(), 10);
+  currentMonth = parseInt(monthSelect.getValue(), 10);
+
+  currentCoverage = coverageSlider.getValue();
+  currentMaxRadiance = radianceSlider.getValue();
+
+  currentPerCapita = perCapitaSlider.getValue();
+  currentGrowth = growthSlider.getValue() / 100;
+
+  var fc = getCurrentFeatures();
+
+  currentEA = fc;
+  currentAOI = getCurrentGeometry(fc);
+
+  annualChartPanel.clear();
+  monthlyChartPanel.clear();
+  forecastChartPanel.clear();
+
+  annualChartPanel.add(smallLabel('Loading annual trend...'));
+  monthlyChartPanel.add(smallLabel('Loading monthly trend...'));
+  forecastChartPanel.add(smallLabel('Calculating forecast...'));
+
+  var selectedImage = getNightImage(
+    currentYear,
+    currentMonth,
+    currentCoverage
+  );
+
+  currentImage = selectedImage;
+
+  var vis = {
+    min: 0,
+    max: currentMaxRadiance,
+    palette: [
+      '000033',
+      '071d70',
+      '174ea6',
+      '087f8c',
+      '32a852',
+      'c8d94a',
+      'fff000',
+      'ff8c00',
+      'ff2600'
+    ]
+  };
+
+  var layers = [];
+
+  if (showLights.getValue()) {
+
+    layers.push(
+      ui.Map.Layer(
+        selectedImage.select('avg_rad'),
+        vis,
+        'VIIRS Night-Time Radiance',
+        true
+      )
+    );
+  }
+
+  if (showBoundary.getValue()) {
+
+    layers.push(
+      ui.Map.Layer(
+        fc.style({
+          color: '00ffff',
+          fillColor: '00000000',
+          width: 1
+        }),
+        {},
+        'Selected EA Boundaries',
+        true
+      )
+    );
+  }
+
+  map.layers().reset(layers);
+
+  var periodLabel = currentMonth === 0 ?
+    'Annual average ' + currentYear :
+    'Month ' + currentMonth + ' / ' + currentYear;
+
+  map.widgets().reset([]);
+
+  map.add(ui.Label(
+    periodLabel + ' | Gambia',
+    {
+      position: 'top-left',
+      backgroundColor: '#101923',
+      color: '#ffffff',
+      padding: '8px',
+      fontSize: '12px'
+    }
+  ));
+
+  fc.size().evaluate(function(featureCount) {
+
+    if (!featureCount || featureCount === 0) {
+
+      populationLabel.setValue('No EA features found.');
+      householdLabel.setValue('No household data available.');
+
+      annualChartPanel.clear();
+      monthlyChartPanel.clear();
+      forecastChartPanel.clear();
+
+      annualChartPanel.add(smallLabel(
+        'No selected enumeration areas.'
+      ));
+
+      monthlyChartPanel.add(smallLabel(
+        'No selected enumeration areas.'
+      ));
+
+      forecastChartPanel.add(smallLabel(
+        'No selected enumeration areas.'
+      ));
+
+      return;
+    }
+
+    var populationValue = ee.Number(
+      ee.Algorithms.If(
+        ee.Algorithms.IsEqual(
+          fc.aggregate_sum('sum_pop'),
+          null
+        ),
+        0,
+        fc.aggregate_sum('sum_pop')
+      )
+    );
+
+    var householdValue = ee.Number(
+      ee.Algorithms.If(
+        ee.Algorithms.IsEqual(
+          fc.aggregate_sum('sum_hhs'),
+          null
+        ),
+        0,
+        fc.aggregate_sum('sum_hhs')
+      )
+    );
+
+    var lightStats = selectedImage
+      .select('avg_rad')
+      .reduceRegion({
+        reducer: ee.Reducer.mean()
+          .combine({
+            reducer2: ee.Reducer.max(),
+            sharedInputs: true
+          }),
+        geometry: currentAOI,
+        scale: 500,
+        maxPixels: 1e13,
+        bestEffort: true
+      });
+
+    var summary = ee.Dictionary({
+      population: populationValue,
+      households: householdValue,
+      light: lightStats
+    });
+
+    summary.evaluate(function(result) {
+
+      if (!result) return;
+
+      var population = Number(result.population || 0);
+      var households = Number(result.households || 0);
+
+      populationLabel.setValue(
+        'Population: ' + formatNumber(population, 0)
+      );
+
+      householdLabel.setValue(
+        'Households: ' + formatNumber(households, 0)
+      );
+
+      var light = result.light || {};
+
+      var meanRadiance = light.avg_rad_mean;
+      var maximumRadiance = light.avg_rad_max;
+
+      radianceLabel.setValue(
+        'Mean radiance: ' +
+        formatNumber(meanRadiance, 3) +
+        ' nW/cm²/sr'
+      );
+
+      maxRadianceLabel.setValue(
+        'Maximum radiance: ' +
+        formatNumber(maximumRadiance, 3)
+      );
+
+      var annualKwh = currentPerCapita * 12;
+
+      var annualMWh = population * annualKwh / 1000;
+
+      var averageMW = annualMWh / 8760;
+
+      annualDemandLabel.setValue(
+        'Estimated annual demand: ' +
+        formatNumber(annualMWh, 1) + ' MWh'
+      );
+
+      peakDemandLabel.setValue(
+        'Average equivalent load: ' +
+        formatNumber(averageMW, 3) + ' MW'
+      );
+
+      annualChartPanel.clear();
+      monthlyChartPanel.clear();
+      forecastChartPanel.clear();
+
+      annualChartPanel.add(
+        makeAnnualChart(currentAOI)
+      );
+
+      monthlyChartPanel.add(
+        makeMonthlyChart(currentYear, currentAOI)
+      );
+
+      forecastChartPanel.add(
+        makeForecastChart(population)
+      );
+
+      kpiGrid.clear();
+
+      kpiGrid.add(
+        makeKPI(
+          'Enumeration areas',
+          formatNumber(featureCount, 0),
+          'Selected EA features'
+        )
+      );
+
+      kpiGrid.add(
+        makeKPI(
+          'Population',
+          formatNumber(population, 0),
+          'EA population total'
+        )
+      );
+
+      kpiGrid.add(
+        makeKPI(
+          'Households',
+          formatNumber(households, 0),
+          'EA household total'
+        )
+      );
+    });
+
+    // Night-time image availability.
+    var start;
+    var end;
+
+    if (currentMonth === 0) {
+      start = ee.Date.fromYMD(currentYear, 1, 1);
+      end = start.advance(1, 'year');
+    } else {
+      start = ee.Date.fromYMD(
+        currentYear,
+        currentMonth,
+        1
+      );
+      end = start.advance(1, 'month');
+    }
+
+    viirs.filterDate(start, end)
+      .size()
+      .evaluate(function(count) {
+
+        if (!count || count === 0) {
+          radianceLabel.setValue(
+            'No VIIRS observations available for this period.'
+          );
+        }
+      });
+  });
+}
+
+
+// ============================================================
+// 22. EXPORTS
+// ============================================================
+
+controls.add(heading('05 | DATA EXPORTS'));
+
+var exportTableButton = ui.Button({
+  label: 'EXPORT SELECTED EA DATA (CSV)',
+  style: {
+    stretch: 'horizontal',
+    backgroundColor: '#22577a',
+    color: '#ffffff'
+  },
+  onClick: function() {
+
+    var exportFC = getCurrentFeatures().select([
+      'RCO',
+      'lganame',
+      'distname',
+      'wardname',
+      'eaname',
+      'feacode',
+      'sum_pop',
+      'sum_hhs'
+    ]);
+
+    Export.table.toDrive({
+      collection: exportFC,
+      description: 'GBoS_Energy_Demand_Selected_EA',
+      fileFormat: 'CSV'
+    });
+
+    print(
+      'CSV export task created. Open the Tasks tab to run it.'
+    );
+  }
+});
+
+var exportImageButton = ui.Button({
+  label: 'EXPORT NIGHT-TIME LIGHTS (GEOTIFF)',
+  style: {
+    stretch: 'horizontal',
+    backgroundColor: '#22577a',
+    color: '#ffffff'
+  },
+  onClick: function() {
+
+    var year = parseInt(yearSelect.getValue(), 10);
+    var month = parseInt(monthSelect.getValue(), 10);
+
+    var image = getNightImage(
+      year,
+      month,
+      coverageSlider.getValue()
+    ).select('avg_rad');
+
+    Export.image.toDrive({
+      image: image,
+      description: 'GBoS_VIIRS_Radiance_' + year + '_' + month,
+      folder: 'GBoS_GEOAI_Exports',
+      fileNamePrefix: 'GBoS_VIIRS_Radiance_' + year + '_' + month,
+      region: currentAOI,
+      scale: 500,
+      crs: 'EPSG:4326',
+      maxPixels: 1e13
+    });
+
+    print(
+      'GeoTIFF export task created. Open the Tasks tab to run it.'
+    );
+  }
+});
+
+controls.add(exportTableButton);
+controls.add(exportImageButton);
+
+
+// ============================================================
+// 23. CONTROL EVENTS
+// ============================================================
+
+yearSelect.onChange(runAnalysis);
+monthSelect.onChange(runAnalysis);
+
+coverageSlider.onChange(runAnalysis);
+radianceSlider.onChange(runAnalysis);
+
+perCapitaSlider.onChange(runAnalysis);
+growthSlider.onChange(runAnalysis);
+
+
+// ============================================================
+// 24. APP LAYOUT
+// ============================================================
+
+controls.style().set({
+  width: '33.33%',
+  height: '100%'
+});
+
+map.style().set({
+  width: '33.34%',
+  height: '100%'
+});
+
+analytics.style().set({
+  width: '33.33%',
+  height: '100%'
+});
+
+ui.root.clear();
+
+ui.root.setLayout(
+  ui.Panel.Layout.flow('horizontal')
+);
+
+ui.root.add(controls);
+ui.root.add(map);
+ui.root.add(analytics);
+
+
+// ============================================================
+// 25. INITIALIZE
+// ============================================================
+
+print('GBoS GEOAI Energy Demand and Night-Time Lights');
+print('VIIRS collection:', viirs);
+print('Gambia EA dataset:', ea);
+print('Selected geography is based on EA attributes.');
+print('Energy demand is an indicative scenario model.');
+
+runAnalysis();
